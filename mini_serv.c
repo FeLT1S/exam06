@@ -7,27 +7,26 @@
 #include <sys/select.h>
 
 typedef struct		s_client {
-	int				fd, id;
-	struct s_client	*next;
-	char cl_buff[42 * 4096];
+	int             fd, id;
+	struct s_client *next;
+	char            cl_buff[42 * 4096];
 }					t_client;
 
-t_client			*g_clients;
-fd_set				curr_sock, cpy_read, cpy_write;
-int					sock_fd, g_id = 0;
-char				str[42*4096], tmp[42*4096], buf[42*4096 + 42], msg[42];
+t_client            *g_clients;
+fd_set              curr_sock, cpy_read, cpy_write;
+int                 sock_fd, g_id = 0;
+char                str[42*4096], tmp[42*4096], buff[42*4096 + 42];
 
-void	fatal() {
+void fatal() {
 	write(2, "Fatal error\n", strlen("Fatal error\n"));
 	close(sock_fd);
 	exit(1);
 }
 
-void	send_all(int fd, char *str_req) {
+void send_all(int fd, char *str_req) {
 	for (t_client *it = g_clients; it; it = it->next)
 		if (FD_ISSET(it->fd, &cpy_write) && it->fd != fd)
-			if (send(it->fd, str_req, strlen(str_req), MSG_WAITALL) < 0)
-				fatal();
+			send(it->fd, str_req, strlen(str_req), 0);
 }
 
 char *get_buff(int fd) {
@@ -37,14 +36,14 @@ char *get_buff(int fd) {
 	return (0);
 }
 
-int		get_id(int fd) {
+int get_id(int fd) {
 	for (t_client *it = g_clients; it; it = it->next)
 		if (it->fd == fd)
 			return (it->id);
 	return (-1);
 }
 
-int		get_max_fd() {
+int get_max_fd() {
 	int	max = sock_fd;
 
 	for (t_client *it = g_clients; it; it = it->next)
@@ -52,23 +51,23 @@ int		get_max_fd() {
 	return (max);
 }
 
-void	ex_msg(int fd, int *i) {
-	int j = 0;
+void ex_msg(int fd) {
+	int j = 0, i = -1;
 
-	while (get_buff(fd)[++*i]) {
-		tmp[j++] = get_buff(fd)[*i];
-		if (get_buff(fd)[*i] == '\n') {
-			sprintf(buf, "client %d: %s", get_id(fd), tmp);
-			send_all(fd, buf);
+	while (get_buff(fd)[++i]) {
+		tmp[j++] = get_buff(fd)[i];
+		if (get_buff(fd)[i] == '\n') {
+			sprintf(buff, "client %d: %s", get_id(fd), tmp);
+			send_all(fd, buff);
 			j = 0;
 			bzero(&tmp, strlen(tmp));
-			bzero(&buf, strlen(buf));
+			bzero(&buff, strlen(buff));
 		}
 	}
-	bzero(&str, strlen(str));
+	strcpy(get_buff(fd), &get_buff(fd)[i]);
 }
 
-int		add_client_to_list(int fd) {
+int add_client_to_list(int fd) {
 	t_client	*it = g_clients, *new;
 
 	if (!(new = calloc(1, sizeof(t_client))))
@@ -86,11 +85,7 @@ int		add_client_to_list(int fd) {
 	return (new->id);
 }
 
-void	add_client() {
-
-}
-
-int		rm_client(int fd) {
+int rm_client(int fd) {
 	t_client	*it = g_clients, *del;
 	int			id = get_id(fd);
 
@@ -107,7 +102,7 @@ int		rm_client(int fd) {
 	return (id);
 }
 
-int		main(int ac, char **av) {
+int main(int ac, char **av) {
 	if (ac != 2) {
 		write(2, "Wrong number of arguments\n", strlen("Wrong number of arguments\n"));
 		exit(1);
@@ -130,7 +125,7 @@ int		main(int ac, char **av) {
 	FD_ZERO(&curr_sock);
 	FD_SET(sock_fd, &curr_sock);
 	bzero(&tmp, sizeof(tmp));
-	bzero(&buf, sizeof(buf));
+	bzero(&buff, sizeof(buff));
 	bzero(&str, sizeof(str));
 
 	while (420) {
@@ -140,23 +135,22 @@ int		main(int ac, char **av) {
 		for (int fd = 0; fd <= get_max_fd(); fd++) {
 			if (FD_ISSET(fd, &cpy_read)) {
 				if (fd == sock_fd) {
-					bzero(&msg, sizeof(msg));
 					struct sockaddr_in	clientaddr;
-					unsigned int len = sizeof(clientaddr); 
+					unsigned int len; 
 					int client_fd;
 
 					if ((client_fd = accept(sock_fd, (struct sockaddr *)&clientaddr, &len)) < 0)
 						continue ;
-					sprintf(msg, "server: client %d just arrived\n", add_client_to_list(client_fd));
-					send_all(client_fd, msg);
+					sprintf(buff, "server: client %d just arrived\n", add_client_to_list(client_fd));
+					send_all(client_fd, buff);
 					FD_SET(client_fd, &curr_sock);
+                    bzero(&buff, sizeof(buff));
 					break ;
 				} else {
-					int test;
-					if ( (test = recv(fd, str, 42 * 8192, 0)) <= 0) {
-						bzero(&msg, sizeof(msg));
-						sprintf(msg, "server: client %d just left\n", rm_client(fd));
-						send_all(fd, msg);
+					if (recv(fd, str, 42 * 4096, 0) <= 0) {
+						sprintf(buff, "server: client %d just left\n", rm_client(fd));
+						send_all(fd, buff);
+						bzero(&buff, sizeof(buff));
 						FD_CLR(fd, &curr_sock);
 						close(fd);
 						break ;
@@ -164,12 +158,8 @@ int		main(int ac, char **av) {
 					else {
 						strcat(get_buff(fd), str);
 						bzero(&str, sizeof(str));
-						int i = -1;
-						while (strchr(get_buff(fd), '\n')) {
-							ex_msg(fd, &i);
-							++i;
-							bzero(get_buff(fd), 4096 * 42);
-						}
+						if (strstr(get_buff(fd), "\n"))
+							ex_msg(fd);
 						break ;
 					}
 				}
